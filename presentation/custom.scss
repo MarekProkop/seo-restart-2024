@@ -1,0 +1,40 @@
+/*-- scss:defaults --*/
+
+$presentation-font-size-root: 36px;
+$presentation-h2-font-size: 1.8em;
+$presentation-h3-font-size: 1.1em;
+
+/*-- scss:rules --*/
+
+h2 {
+  margin-bottom: 0.5em !important;
+}
+
+.reveal div.sourceCode {
+  margin: 1em 0 !important;
+}
+
+.pagedtable {
+  font-size: 75%;
+}
+
+.pagedtable .pagedtable-footer {
+  font-size: 60%;
+}
+
+.reveal .slide blockquote {
+  border-left: 3px solid $text-muted;
+  padding-left: 0.5em;
+}
+
+.reveal .slide .key-point {
+  font-size: 200%;
+}
+
+kbd {
+  font-variant: small-caps;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  padding: 0 7px;
+  background: #f0f0f0;
+}

@@ -1,0 +1,308 @@
+---
+title: "Segmentování dotazů ze Search Console"
+subtitle: "Vzor reportu pro SEO Restart 2024"
+author: "Marek Prokop"
+date: last-modified
+date-format: "D. M. YYYY"
+execute: 
+  echo: false
+  warning: false
+  error: false
+format:
+  html:
+    self-contained: true
+    toc: true
+    toc-location: right
+    toc-title: "Obsah"
+    toc-depth: 3
+    df-print: paged
+---
+
+```{r}
+#| label: libraries and functions
+#| include: false
+
+# Pro práci s daty vždy používám balíček tidyverse.
+
+library(tidyverse)
+
+# Balíček here slouží k určení cest ke složkám v rámci projektu RStudia.
+
+library(here)
+
+# Následující dva balíčky zpřístupňují API Search Console a OpenAI.
+
+library(searchConsoleR)
+library(openai)
+
+# Poslední dva balíčky slouží k vytváření hezkých tabulek a k "tisku" textů s
+# doplněnými daty.
+
+library(gt)
+library(epoxy)
+
+# Pro balíček epoxy si nadefinuju české formátování  čísel, procent, dat a časů.
+
+epoxy_transform_set(
+  .comma = scales::label_number(big.mark = " "),
+  .percent = scales::label_percent(accuracy = 0.01),
+  .double = scales::label_number(big.mark = " ", accuracy = 0.01),
+  .date = function(x) {
+    x |>
+      format("%d. %m. %Y") |>
+      str_remove_all("\\b0")
+  },
+  .datetime = function(x) {
+    x |>
+      format("%d. %m. %Y %H:%M") |>
+      str_remove_all("\\b0")
+  }
+)
+
+# Autorizuju si přístup k Search Consoli. Svůj e-mail mám uložený v proměnné
+# prostředí tak, aby ve skriptech nebyl vidět.
+
+scr_auth(email = Sys.getenv("MY_GOOGLE_ACCOUNT"))
+
+# Funkce na cosinovou podobnost. Vychází z dokumentace OpenAI API:
+# https://platform.openai.com/docs/guides/embeddings/which-distance-function-should-i-use
+
+cosine_similarity <- function(x, y) {
+  sum(x * y)
+}
+
+# Načtu si připravenou funkci get_embeddings, která záskává ebeddings z OpenAI
+# API a již záskané embeddings kešuje, aby ušetřila peníze.
+
+source(here::here("R", "get_embeddings.R"))
+```
+
+```{r}
+#| label: parameters
+
+# Zde nastavte svůj web a případně jiný časový rozsah
+
+site <- "http://www.marekp.cz/"
+date_from <- today() - 92
+date_to <- today() - 3
+
+# Zde nastavte segmenty dotazů. Jedná se o tabulku, která má v prvním sloupci
+# název segmentu a v druhém sloupci text, který segment co nejlépe
+# charakterizuje. S tímto textem možná budete muset trochu experimentovat, aby
+# skript vracel co nejlepší výsledky.
+
+segments <- tribble(
+  ~name,       ~description,
+  "harmonika", "harmonica, blues harp, music",
+  "turistika", "turistika, trasa, cesta, pěší výlet, dálkový pochod",
+  "OSM",       "OpenStreetMap, OSM", 
+  "koťata",    "kotě, koťata, koťátko"
+)
+
+# Proměnná other_name říká, jak se bude jmenovat segment dotazů, které se
+# nepodaří zařadit do žádného jiného segmentu.
+
+other_name <- "ostatní"
+
+# Promenná threshold určuje do které maximální podobnosti bude dotaz zařazen
+# mezi ostatní.
+
+threshold <- 0.3
+```
+
+```{r}
+#| label: fetch queries and add ebeddings
+#| include: false
+
+# V tomto bloku načtu dotazy ze Search Console funkcí search_analytics a
+# připojím k nim text embedding z OpenAI API funkcí get_embeddings.
+
+# Funkce get_embeddings kešuje embeddings získaná z OpenAI API, takže za
+# opakované volání se stejnými dotazy neplatíte znovu.
+
+cache_file_name <- here("data", "embeddings.rds")
+
+queries <- search_analytics(
+  siteURL = site,
+  startDate = date_from,
+  endDate = date_to,
+  dimensions = "query"
+) |>
+  mutate(
+    embedding = get_embeddings(
+      texts = query,
+      cache_path = cache_file_name,
+      model = "text-embedding-3-small"
+    )
+  )
+
+```
+
+## Úvod
+
+```{epoxy "intro"}
+Ze Search Console webu `{site}` jsem načetl všechny dotazy, na které se web zobrazil ve výsledcích hledání Googlu v období od {.date date_from} do {.date date_to}. Těchto dotazů je celkem {.number nrow(queries)}.
+
+Tyto dotazy jsem pomocí OpenAI API rozdělil do {nrow(segments)} segmentů:
+```
+
+```{epoxy "segment list"}
+- {segments$name}
+```
+
+```{r}
+#| label: segment embeddings
+
+# V tomto bloku připojím embeddings z OpenAI API k jednotlivým segmentům.
+
+segment_embeddins <- segments |>
+  mutate(
+    embedding = get_embeddings(
+      texts = description,
+      cache_path = cache_file_name,
+      model = "text-embedding-3-small"
+    )
+  )
+
+```
+
+```{r}
+#| label: similarity calculation
+
+# V tomto bloku doplním do tabulky dotazů sloupce pro jednotlivé segmenty a
+# spočítám pro ně cosinovou podobnost s popisem daného segmentu.
+
+
+segmented_queries <- queries |> 
+  bind_cols(
+    map2(
+      segment_embeddins$name,
+      segment_embeddins$embedding,
+      \(x, y) {
+        queries |> 
+          mutate(
+            !!x := map_dbl(embedding, cosine_similarity, y),
+            .keep = "none"
+          )
+      }
+    ) |> 
+      bind_cols()
+  ) |> 
+  select(!embedding) |> 
+  pivot_longer(
+    cols = !query:position,
+    names_to = "segment"
+  ) |> 
+  group_by(query) |> 
+  slice_max(order_by = value) |> 
+  ungroup() |> 
+  mutate(
+    segment = if_else(value > threshold, segment, other_name),
+    segment = factor(segment, levels = c(segments$name, other_name))
+  )
+```
+
+## Výsledky
+
+### Příklady dotazů podle segmentů
+
+```{r}
+#| label: sample queries
+
+set.seed(123)
+
+segmented_queries |> 
+  group_by(segment) |> 
+  slice_sample(n = 10) |> 
+  summarise(
+    queries = paste(query, collapse = ", ")
+  ) |> 
+  ungroup() |> 
+  gt()
+```
+
+### Agregace metrik podle segmentů
+
+```{r}
+#| label: aggregated segments
+
+aggregated_segments <- segmented_queries |>
+  group_by(segment) |> 
+  summarise(
+    queries = n(),
+    position = weighted.mean(position, impressions),
+    impressions = sum(impressions),
+    clicks = sum(clicks),
+    ctr = clicks / impressions
+  ) |> 
+  ungroup() |> 
+  relocate(position, .after = last_col()) |> 
+  arrange(segment)
+
+aggregated_segments |> 
+  gt() |> 
+  tab_options(
+    table.align = "left"
+  ) |> 
+  tab_header(
+    title = "Metriky Search Console agregované podle segmentů dotazů"
+  ) |> 
+  fmt_integer(queries:clicks, sep_mark = " ") |> 
+  fmt_percent(ctr, sep_mark = " ", dec_mark = ",") |> 
+  fmt_number(position, sep_mark = " ", dec_mark = ",")
+```
+
+
+```{r}
+#| label: charts
+
+aggregated_segments |> 
+  pivot_longer(
+    cols = queries:position,
+    names_to = "metric"
+  ) |> 
+  mutate(
+    metric = as_factor(metric),
+    segment = fct_rev(segment)
+  ) |> 
+  ggplot(aes(x = segment, y = value)) +
+  geom_col() +
+  coord_flip() +
+  facet_wrap(vars(metric), scales = "free_x") +
+  labs(
+    title = "Metriky Search Console agregované podle segmentů dotazů",
+    y = NULL
+  )
+  
+```
+
+### Vývoj segmentů v čase
+
+```{r}
+#| label: time series
+#| message: false
+
+search_analytics(
+  siteURL = site,
+  startDate = date_from,
+  endDate = date_to,
+  dimensions = c("date", "query")
+) |>
+  left_join(
+    segmented_queries |> 
+      select(query, segment),
+    by = join_by(query)
+  ) |> 
+  group_by(date, segment) |> 
+  summarise(
+    impressions = sum(impressions)
+  ) |> 
+  ggplot(aes(x = date, y = impressions, fill = segment)) +
+  geom_area() +
+  scale_fill_brewer(type = "qual", palette = 6) +
+  labs(
+    title = "Vývoj impresí segmentů dotazů v čase"
+  )
+
+```
+

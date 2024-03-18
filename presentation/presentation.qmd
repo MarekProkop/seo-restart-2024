@@ -1,0 +1,290 @@
+---
+title: "SEO + R + OpenIA API = ❤️"
+author: "Marek Prokop"
+institute: PROKOP software s.r.o.
+date: today
+date-format: "D. M. YYYY"
+format:
+  revealjs:
+    theme: [white, custom.scss]
+    highlight-style: a11y
+    code-line-numbers: false
+    auto-stretch: true
+    df-print: paged
+    controls: true
+    controls-layout: bottom-right
+    progress: true
+    self-contained: false
+  beamer:
+    aspectratio: 169
+---
+
+## Začnu praktickým příkladem
+
+1. Načtu dotazy ze Search Console.
+1. Rozdělím je do několika tematických segmentů.
+1. Vyrobím report s několika grafy a slovním shrnutím.
+
+
+```{r}
+#| label: libs
+#| include: false
+
+library(tidyverse)
+library(searchConsoleR)
+library(openai)
+library(here)
+library(gt)
+library(epoxy)
+
+epoxy_transform_set(
+  .comma = scales::label_number(big.mark = " "),
+  .percent = scales::label_percent(accuracy = 0.01),
+  .double = scales::label_number(big.mark = " ", accuracy = 0.01),
+  .date = function(x) {
+    x |>
+      format("%d. %m. %Y") |>
+      str_remove_all("\\b0")
+  },
+  .datetime = function(x) {
+    x |>
+      format("%d. %m. %Y %H:%M") |>
+      str_remove_all("\\b0")
+  }
+)
+
+scr_auth(email = Sys.getenv("MY_GOOGLE_ACCOUNT"))
+
+cosine_similarity <- function(x, y) {
+  sum(x * y)
+}
+
+source(here::here("R", "get_embeddings.R"))
+
+```
+
+```{r}
+#| label: parameters
+
+site <- "http://www.marekp.cz/"
+date_from <- today() - 92
+date_to <- today() - 3
+
+segments <- tribble(
+  ~name,       ~description,
+  "harmonika", "harmonica, blues harp, music",
+  "turistika", "turistika, trasa, cesta, pěší výlet, dálkový pochod",
+  "OSM",       "OpenStreetMap, OSM", 
+  "koťata",    "kotě, koťata, koťátko"
+)
+
+other_name <- "ostatní"
+
+threshold <- 0.3
+
+cache_file_name <- here("data", "embeddings.rds")
+
+```
+
+## Načtu dotazy ze Search Console
+
+```{r}
+#| echo: true
+#| message: false
+
+queries <- search_analytics(
+  siteURL = "http://www.marekp.cz/",
+  dimensions = "query"
+)
+queries
+```
+
+## Dotazy rozdělím do tematických skupin (segmentů)
+
+```{r}
+#| label: segment querie
+#| eval: false
+#| echo: true
+
+segmented_queries <- queries |> segment_queries(segments)
+
+segmented_queries |> arrange(desc(impressions)) |> select(query, segment)
+```
+
+```{r}
+#| label: segment queries 2
+
+segment_embeddins <- segments |>
+  mutate(
+    embedding = get_embeddings(
+      texts = description,
+      cache_path = cache_file_name,
+      model = "text-embedding-3-small"
+    )
+  )
+
+queries <- queries |> 
+  mutate(
+    embedding = get_embeddings(
+      texts = query,
+      cache_path = cache_file_name,
+      model = "text-embedding-3-small"
+    )
+  )
+
+segmented_queries <- queries |> 
+  bind_cols(
+    map2(
+      segment_embeddins$name,
+      segment_embeddins$embedding,
+      \(x, y) {
+        queries |> 
+          mutate(
+            !!x := map_dbl(embedding, cosine_similarity, y),
+            .keep = "none"
+          )
+      }
+    ) |> 
+      bind_cols()
+  ) |> 
+  select(!embedding) |> 
+  pivot_longer(
+    cols = !query:position,
+    names_to = "segment"
+  ) |> 
+  group_by(query) |> 
+  slice_max(order_by = value) |> 
+  ungroup() |> 
+  mutate(
+    segment = if_else(value > threshold, segment, other_name),
+    segment = factor(segment, levels = c(segments$name, other_name))
+  )
+
+segmented_queries |> arrange(desc(impressions)) |> select(query, segment)
+```
+
+## Segmenty zobrazím s příklady dotazů
+
+```{r}
+#| label: sample queries
+
+set.seed(123)
+
+segmented_queries |> 
+  group_by(segment) |> 
+  slice_sample(n = 20) |> 
+  summarise(
+    queries = paste(query, collapse = ", ")
+  ) |> 
+  ungroup() |> 
+  gt()
+```
+
+
+## Segmenty mohu i agregovat
+
+```{r}
+#| label: aggregated segments
+
+aggregated_segments <- segmented_queries |>
+  group_by(segment) |> 
+  summarise(
+    queries = n(),
+    position = weighted.mean(position, impressions),
+    impressions = sum(impressions),
+    clicks = sum(clicks),
+    ctr = clicks / impressions
+  ) |> 
+  ungroup() |> 
+  relocate(position, .after = last_col()) |> 
+  arrange(segment)
+
+aggregated_segments |> 
+  gt() |> 
+  tab_options(
+    table.align = "left"
+  ) |> 
+  tab_header(
+    title = "Metriky Search Console agregované podle segmentů dotazů"
+  ) |> 
+  fmt_integer(queries:clicks, sep_mark = " ") |> 
+  fmt_percent(ctr, sep_mark = " ", dec_mark = ",") |> 
+  fmt_number(position, sep_mark = " ", dec_mark = ",")
+```
+
+## Nebo z nich vykreslit různé grafy
+
+```{r}
+#| label: charts
+
+aggregated_segments |> 
+  pivot_longer(
+    cols = queries:position,
+    names_to = "metric"
+  ) |> 
+  mutate(
+    metric = as_factor(metric),
+    segment = fct_rev(segment)
+  ) |> 
+  ggplot(aes(x = segment, y = value)) +
+  geom_col() +
+  coord_flip() +
+  facet_wrap(vars(metric), scales = "free_x") +
+  labs(
+    title = "Metriky Search Console agregované podle segmentů dotazů",
+    y = NULL
+  )
+  
+```
+
+## Vývoj v čase
+
+```{r}
+#| label: time series
+#| message: false
+
+search_analytics(
+  siteURL = site,
+  startDate = date_from,
+  endDate = date_to,
+  dimensions = c("date", "query")
+) |>
+  left_join(
+    segmented_queries |> 
+      select(query, segment),
+    by = join_by(query)
+  ) |> 
+  group_by(date, segment) |> 
+  summarise(
+    impressions = sum(impressions)
+  ) |> 
+  ggplot(aes(x = date, y = impressions, fill = segment)) +
+  geom_area() +
+  scale_fill_brewer(type = "qual", palette = 6) +
+  labs(
+    title = "Vývoj impresí segmentů dotazů v čase"
+  )
+
+```
+
+## Z toho všeho můžu udělat report pro klienta {background-iframe="file:///C:/Dev/R/Public/seo-restart-2024/docs/query-segments.html"}
+
+# Jak to můžete sami používat
+
+## Naklonujete si repositář
+
+[https://github.com/MarekProkop/seo-restart-2024](https://github.com/MarekProkop/seo-restart-2024)
+
+## Upravíte <br />`docs/query-segments.qmd`
+
+- V hlavičce změníte titulek, podtitulek a autora
+- V bloku s labelem *parameters* změníte:
+  - property SearCh Console
+  - názvy a popisy požadovaných segmentů
+  - název skupiny pro ostatní
+  - práh zařazení do ostatní
+
+## Vyrenderujete report
+
+V RStudiu tlačítkem *Render*.
+
