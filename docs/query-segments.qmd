@@ -75,6 +75,12 @@ cosine_similarity <- function(x, y) {
 # API a již záskané embeddings kešuje, aby ušetřila peníze.
 
 source(here::here("R", "get_embeddings.R"))
+
+# skript segment_queries.R obsahuje funkci, která k tabulce dotazů s embeddings
+# přidá nejlépe odpovídající segment.
+
+source(here::here("R", "segment_queries.R"))
+
 ```
 
 ```{r}

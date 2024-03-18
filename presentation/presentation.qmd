@@ -55,11 +55,8 @@ epoxy_transform_set(
 
 scr_auth(email = Sys.getenv("MY_GOOGLE_ACCOUNT"))
 
-cosine_similarity <- function(x, y) {
-  sum(x * y)
-}
-
 source(here::here("R", "get_embeddings.R"))
+source(here::here("R", "segment_queries.R"))
 
 ```
 
@@ -99,68 +96,36 @@ queries <- search_analytics(
 queries
 ```
 
-## Dotazy rozdělím do tematických skupin (segmentů)
+## Dotazy rozdělím do segmentů
 
 ```{r}
-#| label: segment querie
-#| eval: false
-#| echo: true
+#| label: segment queries
+#| rows.print: 15
 
-segmented_queries <- queries |> segment_queries(segments)
+segmented_queries <- segment_queries(
+  queries = queries |> 
+    mutate(
+      embedding = get_embeddings(
+        texts = query,
+        cache_path = cache_file_name,
+        model = "text-embedding-3-small"
+      )
+    ),
+  segments = segments |>
+    mutate(
+      embedding = get_embeddings(
+        texts = description,
+        cache_path = cache_file_name,
+        model = "text-embedding-3-small"
+      )
+    ),
+  threshold = threshold,
+  other_name = other_name
+)
 
-segmented_queries |> arrange(desc(impressions)) |> select(query, segment)
-```
-
-```{r}
-#| label: segment queries 2
-
-segment_embeddins <- segments |>
-  mutate(
-    embedding = get_embeddings(
-      texts = description,
-      cache_path = cache_file_name,
-      model = "text-embedding-3-small"
-    )
-  )
-
-queries <- queries |> 
-  mutate(
-    embedding = get_embeddings(
-      texts = query,
-      cache_path = cache_file_name,
-      model = "text-embedding-3-small"
-    )
-  )
-
-segmented_queries <- queries |> 
-  bind_cols(
-    map2(
-      segment_embeddins$name,
-      segment_embeddins$embedding,
-      \(x, y) {
-        queries |> 
-          mutate(
-            !!x := map_dbl(embedding, cosine_similarity, y),
-            .keep = "none"
-          )
-      }
-    ) |> 
-      bind_cols()
-  ) |> 
-  select(!embedding) |> 
-  pivot_longer(
-    cols = !query:position,
-    names_to = "segment"
-  ) |> 
-  group_by(query) |> 
-  slice_max(order_by = value) |> 
-  ungroup() |> 
-  mutate(
-    segment = if_else(value > threshold, segment, other_name),
-    segment = factor(segment, levels = c(segments$name, other_name))
-  )
-
-segmented_queries |> arrange(desc(impressions)) |> select(query, segment)
+segmented_queries |> 
+  arrange(desc(impressions)) |> 
+  select(query, segment)
 ```
 
 ## Segmenty zobrazím s příklady dotazů
@@ -193,23 +158,24 @@ aggregated_segments <- segmented_queries |>
     position = weighted.mean(position, impressions),
     impressions = sum(impressions),
     clicks = sum(clicks),
-    ctr = clicks / impressions
+    ctr = clicks / impressions,
+    impressions_per_query = impressions / queries,
+    clicks_per_query = clicks / queries
   ) |> 
   ungroup() |> 
-  relocate(position, .after = last_col()) |> 
+  relocate(position, .after = ctr) |> 
   arrange(segment)
 
 aggregated_segments |> 
   gt() |> 
-  tab_options(
-    table.align = "left"
-  ) |> 
   tab_header(
     title = "Metriky Search Console agregované podle segmentů dotazů"
   ) |> 
   fmt_integer(queries:clicks, sep_mark = " ") |> 
   fmt_percent(ctr, sep_mark = " ", dec_mark = ",") |> 
-  fmt_number(position, sep_mark = " ", dec_mark = ",")
+  fmt_number(
+    c(position, impressions_per_query, clicks_per_query), sep_mark = " ", dec_mark = ","
+  )
 ```
 
 ## Nebo z nich vykreslit různé grafy
