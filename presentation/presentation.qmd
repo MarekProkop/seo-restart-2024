@@ -1,6 +1,6 @@
 ---
 title: "SEO + R + OpenIA API = ❤️"
-author: "Marek Prokop"
+author: "Marek Prokop & ChatGPT"
 institute: PROKOP software s.r.o.
 date: today
 date-format: "D. M. YYYY"
@@ -33,6 +33,9 @@ format:
 library(tidyverse)
 library(searchConsoleR)
 library(openai)
+library(rvest)
+library(xml2)
+library(chromote)
 library(here)
 library(gt)
 library(epoxy)
@@ -57,6 +60,7 @@ scr_auth(email = Sys.getenv("MY_GOOGLE_ACCOUNT"))
 
 source(here::here("R", "get_embeddings.R"))
 source(here::here("R", "segment_queries.R"))
+source(here::here("R", "get_content.R"))
 
 ```
 
@@ -233,9 +237,64 @@ search_analytics(
 
 ```
 
-## Z toho všeho můžu udělat report pro klienta {background-iframe="file:///C:/Dev/R/Public/seo-restart-2024/docs/query-segments.html"}
+## Z toho všeho můžu udělat report pro klienta
+
+```{=html}
+<iframe width="960" height="500" src="file:///C:/Dev/R/Public/seo-restart-2024/docs/query-segments.html"></iframe>
+```
+
+# Jak to funguje
+
+## Text embeddings
+
+- Každé slovo, věta či delší text jde reprezentovat vektorem v n-rozměrném prostoru.
+- Tento vektor se nazývá word (nebo text) embedding.
+- Vektory více textů jsou v n-rozměrném prostoru umístěny na různých místech a svírají různé úhly.
+- Vektory, které jsou na podobných místech a míří hodně podobným směrem, pravděpodobně reprezentují významově hodně podobné texty.
+- Podobnost vektorů jde spočítat klasickou geometrií. Já používám cosinovou podobnost.
+
+## Text embeddings v OpenAI API
+
+- Open AIP API nabízí 3 modely pro text embeddings. Já používám *text-embedding-3-small*.
+- Model *text-embedding-3-small* dokáže podle dokumentace OpenAI vygeberovat za 1 USD text embeddings pro 62 500 stránek o 800 tokenech. Za přípravu této přednášky jsem utratil $0.02 :-)
+- Více se dočtete v [dokumentaci k text embeddings OpenAI API](https://platform.openai.com/docs/guides/embeddings/embeddings).
+
+## *marek prokop* jako vektor :-)
+
+```{r}
+#| label: vector marek prokop
+
+get_embeddings("marek prokop", cache_file_name) |> 
+  pluck(1)
+```
+
 
 # Jak to můžete sami používat
+
+## Předpoklady
+
+- Musíte mít přístup k [Search Consoli](https://search.google.com/search-console) alespoň jednoho webu. 
+- Dále musíte mít přístup k [OpenAI API](https://platform.openai.com/) a [vygenerovaný API klíč](https://platform.openai.com/account/api-keys).
+- V proměnné prostředí `MY_GOOGLE_ACCOUNT` máte uloženou e-mailovou adresu svého Google účtu.
+- V proměnné prostředí `OPENAI_API_KEY` máte klíč k API OpenAI.
+
+## Příprava
+
+Zmíněné proměnné vytvoříte např. takto:
+
+1.  Nainstalujte si balíček *usethis*.
+
+2.  Z konsole zadejte příkaz `usethis::edit_r_environ()`. Tím se vám v editoru otevře soubor *.Renviron*.
+
+3.  Do souboru *.Renviron* přidejte tyto dva řádky s upravenými hodnotami:
+
+    ```         
+    MY_GOOGLE_ACCOUNT = "vas.email@gmail.com"
+    OPENAI_API_KEY = "váš_api_key"
+    ```
+
+4.  Soubor uložte a restartujte R (v RStudiu příkazem *Restart R* z menu *Session*).
+
 
 ## Naklonujete si repositář
 
@@ -254,3 +313,100 @@ search_analytics(
 
 V RStudiu tlačítkem *Render*.
 
+# K čemu dalšímu se embeddings z OpenAI API hodí
+
+## Optimalizace textu stránky
+
+1. Stáhnu si text stránky balíčkem *rvest*, případně kombinací *chromote* + *rvest*.
+1. Z textu získám ebeddings.
+1. Získám ebeddings dotazu, na který chci rankovat.
+1. Spočítám cosinovou podobnost.
+1. Upravím text stránky, abych dosáhl větší podobnosti.
+
+## Harmonica layout chart - výsledky
+
+```{r}
+#| label: harmonica results
+#| echo: true
+
+queries |> 
+  filter(
+    str_detect(query, "layout")
+  ) |> 
+  gt()
+```
+
+## Harmonica layout chart - text stránky
+
+```{r}
+#| label: harmonica copy
+#| echo: true
+#| output-location: slide
+
+page_content_cache <- "../data/page-content.rds"
+
+if (file.exists(page_content_cache)) {
+  page_content <- read_rds(page_content_cache)
+} else {
+  rendered_html <- "http://marekp.cz/harmonica/" |> 
+    get_rendered_html() |> 
+    read_html()
+  page_content <- rendered_html |> 
+    html_element("title") |> 
+    html_text2() |> 
+    paste(
+      rendered_html |> get_content(),
+      sep = "\n"
+    )
+  write_rds(page_content, page_content_cache)
+}
+
+cat(page_content)
+```
+
+## Harmonica layout chart - text embeddings
+
+```{r}
+#| label: harmonica text embeddings
+#| echo: true
+
+cosine_similarity(
+  get_embeddings(page_content, cache_path = cache_file_name) |> pluck(1),
+  get_embeddings("harmonica layout", cache_path = cache_file_name) |> pluck(1)
+)
+
+```
+
+## Harmonica layout chart - víc dotazů
+
+```{r}
+#| label: harmonica text multiple queries
+#| echo: true
+
+tibble(query = c(
+  "harmonica layout", "harmonica pentatonic scale", 
+  "harmonica tuning chart", "harmonica chords", "slon v porcelánu"
+)) |> 
+  mutate(
+    embedding = get_embeddings(query, cache_path = cache_file_name),
+    similarity = map_dbl(
+      embedding, cosine_similarity, 
+      get_embeddings(page_content, cache_path = cache_file_name) |> pluck(1)
+    )
+  ) |> 
+  select(!embedding)
+```
+
+
+# A to je pro dnešek všechno
+
+## Kam dál
+
+- [Od Excelu k R](https://www.prokopsw.cz/bookdown/excel-r/) -- pokud chcete s R začít.
+- [Děláte digitální marketing a chcete začít používat R? Tohle je váš studijní plán](https://marekprokop.github.io/jak-pracuju/posts/r-pro-digitalni-marketing/) -- článek pro digitální marketéry, kteří to s R myslí vážně.
+- [Alternativní metoda klasifikace dotazů](https://github.com/MarekProkop/seologer-2023), kterou jsem popisoval na SEO Loggeru 2023.
+- [Dokumentace k OpenAI API](https://platform.openai.com/docs/overview)
+
+# Děkuju za pozornost
+
+mprokop&prokopsw.cz
