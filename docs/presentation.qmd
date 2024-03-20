@@ -240,7 +240,7 @@ search_analytics(
 ## Z toho všeho můžu udělat report pro klienta
 
 ```{=html}
-<iframe width="960" height="500" src="file:///C:/Dev/R/Public/seo-restart-2024/docs/query-segments.html"></iframe>
+<iframe width="960" height="500" src="https://marekprokop.github.io/seo-restart-2024/query-segments.html"></iframe>
 ```
 
 # Jak to funguje
@@ -409,4 +409,4 @@ tibble(query = c(
 
 # Děkuju za pozornost
 
-mprokop&prokopsw.cz
+Dotazy pište na: mprokop@prokopsw.cz

@@ -1,15 +1,15 @@
 # SEO + R + OpenIA API = ❤️ (přednáška pro SEO restart 2024)
 
-Najdete zde prezentaci a vzorové skripty pro mou přednášku na SEO Restartu 2024.
+Repozitář obsahuje všechny materiály k mé přednášce „SEO + R + OpenIA API = ❤️“, kterou jsem připravil pro SEO Restart 2024.
 
-## O přednášce
+## Postup
 
-Přednáška má titulek:
+Projděte si [prezentaci](https://marekprokop.github.io/seo-restart-2024/presentation.html) a postupujte podle instrukcí, které jsou v ní uvedené.
 
-> SEO + R + OpenIA API = ❤️
+## Zdroje
 
-a anotaci:
-
-> Pár ukázek a hodně inspirace na řešení typických úloh v SEO pomocí jazyka R a OpenAI API. Kdo nepracuje v R, snadno si příklady upraví třeba do Pythonu.
-
-Časový rozsah je 25 minut.
+- [Prezentace k přednášce](https://marekprokop.github.io/seo-restart-2024/presentation.html)
+- [Zdrojový kód prezentace](https://github.com/MarekProkop/seo-restart-2024/blob/master/docs/presentation.qmd)
+- [Report vygenerovaný z připravené šablony](https://marekprokop.github.io/seo-restart-2024/query-segments.html)
+- [Zdrojový kód šablony reportu](https://github.com/MarekProkop/seo-restart-2024/blob/master/docs/query-segments.qmd)
+- [Funkce použité v prezentaci a reportu](https://github.com/MarekProkop/seo-restart-2024/tree/master/R)
